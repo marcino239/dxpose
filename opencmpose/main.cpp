@@ -210,6 +210,7 @@ int processSyncRead() {
 	uint8 totResponseLen = 9 + 2*paramCount; 
 	local_buff[ totResponseLen ] = ~csum;
 	SerialUSB.write( local_buff, totResponseLen + 1 );
+  return true;
 }
 
 // set up
