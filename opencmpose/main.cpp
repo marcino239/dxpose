@@ -11,6 +11,8 @@
 #define USB_PACKET_TIMEOUT	100			// ms
 #define DXL_BAUDRATE		1000000
 
+// registers
+#define DXL_ADDR_PRESENT_POS  0x24
 
 // dynamixel commands
 #define DXL_CMD_READ_DATA	2
@@ -19,8 +21,8 @@
 #define CMD_SYNC_READ		8
 
 // dynamixel response
-#define DXL_RES_INS_ERROR	0x40
-#define DXL_RES_NO_ERROR	0x00
+#define DXL_RES_INS_ERROR	(uint8)0x40
+#define DXL_RES_NO_ERROR	(uint8)0x00
 
 // controller address
 #define ID_CONTROLLER	253
@@ -49,7 +51,7 @@ enum DxStates {
 };
 
 // global variables
-enum DxState dxstate = DXS_WAITING;
+enum DxStates dxstate = DXS_WAITING;
 uint8 gotID;
 uint8 gotLen;
 uint8 gotCmd;
@@ -79,9 +81,9 @@ void respondInvalidCommand() {
 	SerialUSB.write( 0xff );
 	SerialUSB.write( 0xff );
 	SerialUSB.write( ID_CONTROLLER );
-	SerialUSB.write( 0x2 );
+	SerialUSB.write( 0x02 );
 	SerialUSB.write( DXL_RES_INS_ERROR );	
-	SerialUSB.write( ~(ID_CONTROLLER + 0x02 + DXL_RES_INS_ERROR) );
+	SerialUSB.write( (uint8)~(ID_CONTROLLER + 0x02 + DXL_RES_INS_ERROR) );
 
 }
 
@@ -90,9 +92,9 @@ void respondOkCommand() {
 	SerialUSB.write( 0xff );
 	SerialUSB.write( 0xff );
 	SerialUSB.write( ID_CONTROLLER );
-	SerialUSB.write( 0x2 );
+	SerialUSB.write( 0x02 );
 	SerialUSB.write( DXL_RES_NO_ERROR );	
-	SerialUSB.write( ~(ID_CONTROLLER + 0x02 + DXL_RES_NO_ERROR) );
+	SerialUSB.write( (uint8)~(ID_CONTROLLER + 0x02 + DXL_RES_NO_ERROR) );
 
 }
 
@@ -108,43 +110,41 @@ void static inline DxlSetRX() {
 
 // returns false if timeout or csum incorrect
 //
-int DxlReadPacketWord( uint8 len, uint16 *ptrWord, uint8 offset ) {
+int DxlReadPacketWord( uint8 len, uint16 *ptrWord ) {
 
-	uint8 local_buff[ MAX_BUFF ];
-	
-	uint32 startTime = millis();
-	
-	int tLen = 0;
-	for( ; tLen < len; tLen = DXL_SERIAL.available() )
-		if( mills() - startTime > dxl_timeout )
-			return false;
-			
-	// read into buffer
-	int i;
-	for( i=0; i<tLen; i++ ) {
-		uint8 b = DXL_SERIAL.read();
-		local_buff[ i ] = b;
-		csum += b;
-	}
-		
-	// check checksum
-	uint8 csum = 0;
-	for( i=2; i<tLen; t++ )
-		csum += local_buff[ i ];
-		
-	if( csum != 0 )
-		return false
-	else {
-		*ptrWord = local_buff[ offset ] | local_buff[ offset+1 ] << 8;
-		return true;
-	}
+  uint8 local_buff[ MAX_BUFF ];
+
+  uint32 startTime = millis();
+
+  int tLen = 0;
+  for( ; tLen < len; tLen = DXL_SERIAL.available() )
+    if( millis() - startTime > dxl_timeout )
+      return false;
+      
+  // read into buffer
+  int i;
+  uint8 csum = 0;
+  for( i=0; i<tLen; i++ ) {
+    uint8 b = DXL_SERIAL.read();
+    local_buff[ i ] = b;
+    csum += b;
+  }
+    
+  // check checksum
+  for( i=2; i<tLen; i++ )
+    csum += local_buff[ i ];
+    
+  if( csum != 0 )
+    return false;
+  else {
+    *ptrWord = local_buff[ 5 ] | local_buff[ 5+1 ] << 8;
+    return true;
+  }
 }
 		
 
 int DxlReadWord( uint8 id, uint8 addr, uint16 *ptrWord ) {
 
-	uint8 csum = ~(id + 6 + addr + 2);
-	
 	DxlSetTX();
 	DXL_SERIAL.write( 0xff );
 	DXL_SERIAL.write( 0xff );
@@ -153,10 +153,10 @@ int DxlReadWord( uint8 id, uint8 addr, uint16 *ptrWord ) {
 	DXL_SERIAL.write( DXL_CMD_READ_DATA );
 	DXL_SERIAL.write( addr );
 	DXL_SERIAL.write( 2 );
-	DXL_SERIAL.write( checksum );
+	DXL_SERIAL.write( (uint8)~(id + 0x04 + DXL_CMD_READ_DATA + addr + 2) );
 	DxlSetRX();
 
-	return DxlReadPacket( 2 + 6, ptrWord, offset );
+	return DxlReadPacketWord( 2 + 6, ptrWord );
 }
 
 
@@ -169,7 +169,7 @@ int processSyncRead() {
 
 	if( paramCount > MAX_DXLS ) { // check if number of parameters does not exceed max servos
 		respondInvalidCommand();
-		return;
+		return false;
 	}
 	
 	uint8 local_buff[ MAX_BUFF ];
@@ -178,7 +178,7 @@ int processSyncRead() {
 	local_buff[ 1 ] = 0xff;
 	local_buff[ 2 ] = ID_CONTROLLER;
 	local_buff[ 3 ] = 2 + 2 * paramCount + 4;
-	local_buff[ 4 ] = command???
+	local_buff[ 4 ] = DXL_RES_NO_ERROR;
 
 	uint32 timeStamp = millis();
 	local_buff[ 5 ] = (timeStamp >> 24) & 0xff;
@@ -191,9 +191,9 @@ int processSyncRead() {
 	for( i=0; i<paramCount; i++ ) {
 		uint16 pos;
 		
-		if( !DxlReadWord( buff[ i ], DXL_ADDR_POS, &pos ) ) {
+		if( !DxlReadWord( buff[ i ], DXL_ADDR_PRESENT_POS, &pos ) ) {
 			respondInvalidCommand();
-			return;
+			return false;
 		}
 		
 		local_buff[ 8 + 2*i     ] = (pos >> 8) & 0xff;
@@ -256,7 +256,7 @@ void loop(){
 		// We need to 0xFF at start of packet
 		b = SerialUSB.read();
 		
-		select( dxstate ) {
+		switch( dxstate ) {
 			case DXS_WAITING:
 				if( b == 0xff ) {
 					dxstate = DXS_H2;
@@ -276,7 +276,7 @@ void loop(){
 				break;
 
 			case DXS_ID:
-				gotId = b;
+				gotID = b;
 				dxstate = DXS_LEN;
 				tempCsum = b;
 				break;
@@ -311,7 +311,7 @@ void loop(){
 				dxstate = DXS_WAITING;
 				gotPacket = true;
 				tempCsum = ~tempCsum;
-				break
+				break;
 				
 			default:
 				dxstate = DXS_WAITING;
@@ -319,12 +319,12 @@ void loop(){
 		}
 		
 		// process packet
-		if( gotPacket )
-			if( gotId == ID_CONTROLLER ) {
+		if( gotPacket ) {
+			if( gotID == ID_CONTROLLER ) {
 				if( tempCsum != gotCsum ) {
 					respondInvalidCommand();
 				} else if( gotCmd == CMD_SYNC_READ ) {
-					processSyncRead() )
+					processSyncRead();
 				} else
 					// invalid command
 					respondInvalidCommand();
@@ -333,11 +333,11 @@ void loop(){
 
 			} else {
 				// send packet to the dynamixel network
-				DxlSetTX()
+				DxlSetTX();
 				
 				DXL_SERIAL.write( 0xff );
 				DXL_SERIAL.write( 0xff );
-				DXL_SERIAL.write( gotId );
+				DXL_SERIAL.write( gotID );
 				DXL_SERIAL.write( gotLen );
 				DXL_SERIAL.write( gotCmd );
 				DXL_SERIAL.write( buff, gotLen );
@@ -349,12 +349,11 @@ void loop(){
 	}
 
 	// check for USB packet timeout
-	if( !gotPacket && dxstate != DXS_WAITING )
-		if( millis() - packetTimeStart > USB_PACKET_TIMEOUT ) {
-			// got timeout
-			dxstate = DXS_WAITING;
-		}
-	}
+	if( !gotPacket && dxstate != DXS_WAITING && (millis() - packetTimeStart > USB_PACKET_TIMEOUT) ) {
+    // got timeout
+    dxstate = DXS_WAITING;
+  }
+
 
 	// process dynamixel received data
 	while( DXL_SERIAL.available() > 0 )
