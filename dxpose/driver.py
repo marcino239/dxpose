@@ -1,9 +1,6 @@
-#!/usr/bin/env python
-
 """
-  PyPose: Serial driver for connection to arbotiX board or USBDynamixel.
-  Copyright (c) 2008,2009 Michael E. Ferguson.  All right reserved.
-
+  dxpose by marcino239
+  
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
@@ -22,124 +19,179 @@
 import serial
 import time
 import sys
-from binascii import b2a_hex
+from enum import Enum, unique
+
 from ax12 import *
 
+
+""" represents dynamixel driver """
 class Driver:
-    """ Class to open a serial port and control AX-12 servos
-    through an arbotiX board or USBDynamixel. """
-    def __init__(self, port="/dev/ttyUSB0",baud=38400, interpolation=False, direct=False):
-        """ This may throw errors up the line -- that's a good thing. """
+	
+	""" represents dynamixel packet """
+	class DXPacket:
+		def __init__():
+			self.ID = 0
+			self.cmd = 0
+			self.length = 0
+			self.params = bytearray( '' )
+			self.csum = 0
+		
+		def checkCSum():
+			tsum = self.ID + self.cmd + self.length
+			for b in self.params
+				tsum += b
+			
+			if (0xff - tsum) & 0xff == self.csum:
+				return True
+			else
+				return False
+
+    """ Class to open a serial port and control AX-12 servos"""
+    def __init__(self, port="/dev/ttyACM0",baud=115200, timeour = 1 ):
         self.ser = serial.Serial()
         self.ser.baudrate = baud
         self.ser.port = port
-        self.ser.timeout = 0.5
+        self.ser.timeout = 1
         self.ser.open()
-        self.error = 0
-        self.hasInterpolation = interpolation
-        self.direct = direct
 
-    def execute(self, index, ins, params):
-        """ Send an instruction to a device. """
-        self.ser.flushInput()
-        length = 2 + len(params)
-        checksum = 255 - ((index + length + ins + sum(params))%256)
-        self.ser.write(chr(0xFF)+chr(0xFF)+chr(index)+chr(length)+chr(ins))
-        for val in params:
-            self.ser.write(chr(val))
-        self.ser.write(chr(checksum))
-        return self.getPacket(0)
+	""" returns binary packet """
+	def createPacket( id, cmd, params ):
+		
+		length = 2 + len( params )
+		packet = bytearray( [ 0xff, 0xff, chr( id ), chr( length ), chr( cmd ) ] )
+		for p in params:
+			packet.append( chr( p ) )
+		
+		csum = 0
+		for b in packet
+			csum += b
+		
+		csum = 255 - (csum - 0xff - 0xff)
+		return packet.append( csum )
+
+	""" listens for a packet """
+    def getPacket( self ):
+
+		@unique
+		class DXState( Enum ):
+			DXS_NONE = 0
+			DXS_H1 = 1
+			DXS_ID = 2
+			DXS_CMD = 3
+			DXS_LEN = 4
+			DXS_PARAMS = 5
+			DXS_CSUM = 6
+		
+		dxstate = DXS_NONE
+		packet = DXPacket()
+		countParams = 0
+		
+		while True:
+			b = self.ser.read()
+			if b =='':
+				raise Exception( "Serial Timeout" )
+			
+			if dxstate == DXS_NONE:
+				if b != chr( 0xff ):
+					raise Exception( "Wrong header" )
+				dxstate = DXS_H1
+			elif dxstate == DXS_H1:
+				if b != chr( 0xff ):
+					raise Exception( "Wrong header" )
+				dxstate = DXS_ID
+			elif dxstate == DXS_ID:
+				packet.ID = b
+				dxstate = DXS_LEN
+			elif dxstate == DXS_LEN:
+				packet.length = b
+				dxstate = DXS_PARAMS
+			elif dxstate == DXS_PARAMS:
+				if countParams < packet.length - 2:
+					packet.params.append( b )
+					countParams += 1
+				if countParams == packet.length - 2:
+					dxstate = DXS_CSUM
+			elif dxstate == DXS_CSUM:
+				packet.csum = b
+				
+				if not packet.checkCSum():
+					raise Exception( "Invalid checksum" )
+				else
+					return packet
+			else
+				raise Exception( "Invalid state" )
+
 
     def setReg(self, index, regstart, values):
-        """ Set the value of registers. Should be called as such:
-        ax12.setReg(1,1,(0x01,0x05)) """
-        self.execute(index, AX_WRITE_DATA, [regstart] + values)
-        return self.error
-
-    def getPacket(self, mode, id=-1, leng=-1, error=-1, params = None):
-        """ Read a return packet, iterative attempt """
-        # need a positive byte
-        d = self.ser.read()
-        if d == '':
-            print("Fail Read")
-            return None
-
-        # now process our byte
-        if mode == 0:           # get our first 0xFF
-            if ord(d) == 0xff:
-                print("Oxff found")
-                return self.getPacket(1)
-            else:
-                print("Oxff NOT found, restart: " + str(ord(d)))
-                return self.getPacket(0)
-        elif mode == 1:         # get our second 0xFF
-            if ord(d) == 0xff:
-                print("Oxff found")
-                return self.getPacket(2)
-            else:
-                print("Oxff NOT found, restart: " + str(ord(d)))
-                return self.getPacket(0)
-        elif mode == 2:         # get id
-            if d != 0xff:
-                print("ID found: " + str(ord(d)))
-                return self.getPacket(3, ord(d))
-            else:
-                print("0xff is not ID, restart")
-                return self.getPacket(0)
-        elif mode == 3:         # get length
-            print("Length found: " + str(ord(d)))
-            return self.getPacket(4, id, ord(d))
-        elif mode == 4:         # read error
-            print("Error level found: " + str(ord(d)))
-            self.error = ord(d)
-            if leng == 2:
-                return self.getPacket(6, id, leng, ord(d), list())
-            else:
-                return self.getPacket(5, id, leng, ord(d), list())
-        elif mode == 5:         # read params
-            print("Parameter found: " + str(ord(d)))
-            params.append(ord(d))
-            if len(params) + 2 == leng:
-                return self.getPacket(6, id, leng, error, params)
-            else:
-                return self.getPacket(5, id, leng, error, params)
-        elif mode == 6:         # read checksum
-            print("Checksum found: " + str(ord(d)))
-            checksum = id + leng + error + sum(params) + ord(d)
-            print("Checksum computed: " + str(checksum))
-            if checksum % 256 != 255:
-                print("Checksum ERROR")
-                return None
-            return params
-        # fail
-        return None
+		self.ser.flashOutput
+        self.ser.write( createPacket( ID, AX_WRITE_DATA, [regstart] + values ) )
 
     def getReg(self, index, regstart, rlength):
-        """ Get the value of registers, should be called as such:
-        ax12.getReg(1,1,1) """
-        vals = self.execute(index, AX_READ_DATA, [regstart, rlength])
-        if vals == None:
-            print("Read Failed: Servo ID = " + str(index))
-            return -1
-        if rlength == 1:
-            return vals[0]
-        return vals
 
-    def syncWrite(self, regstart, vals):
-        """ Set the value of registers. Should be called as such:
-        ax12.syncWrite(reg, ((id1, val1, val2), (id2, val1, val2))) """
-        self.ser.flushInput()
-        length = 4
-        valsum = 0
-        for i in vals:
-            length = length + len(i)
-            valsum = valsum + sum(i)
-        checksum = 255 - ((254 + length + AX_SYNC_WRITE + regstart + len(vals[0]) - 1 + valsum)%256)
-        # packet: FF FF ID LENGTH INS(0x03) PARAM .. CHECKSUM
-        self.ser.write(chr(0xFF)+chr(0xFF)+chr(0xFE)+chr(length)+chr(AX_SYNC_WRITE)+chr(regstart)+chr(len(vals[0])-1))
-        for servo in vals:
-            for value in servo:
-                self.ser.write(chr(value))
-        self.ser.write(chr(checksum))
-        # no return info...
+		self.ser.write( createPacket( ID, AX_READ_DATA, [regstart, rlength] )
 
+		packet = getPacket()
+		
+		l = len( packet.params )
+		if l == 0:
+			raise Exception( "Read Failed: Servo ID: " + str( ID ) )
+		if l == 1:
+			return packet.params[ 0 ]
+		if l == 2:
+			return packet.params[ 0] | packet.params[ 1 ] << 8
+
+		return packet.params
+
+	""" synchronised write. vals has the following composition: 
+	
+		[ [ ID1, [ P1, P2 ] ], [ID2, [P1,P2], ... ]
+
+		parameters are assumed to be uint16
+
+	"""
+    def syncWrite(self, addr, length, vals ):
+		v = bytearray( '' )
+
+		# add register address and length
+		v.append( chr( addr ) )
+		v.append( chr( length ) )
+		
+		for el in vals
+			v.append( el[ 0 ] )		# id
+			params = el[ 1 ]		# parameters
+			for pel in params
+				v.append( chr( pel & 0xff ) )
+				v.append( chr( ( pel >> 8 ) & 0xff )
+
+		self.ser.write( createPacket( AX_ID_BROADCAST, AX_SYNC_WRITE, v )
+
+	""" returns position information for servos
+		
+		[ timestamp, [ID1, Pos1], [ID2, Pos2], ... ]
+		
+		timestamp is local controller time in milliseconds
+		
+	"""
+	def syncRead( self, servoIDs ):
+		
+		ser.write( createPacket( AX_ID_CONTROLLER, AX_SYNC_READ, servoIDs ) )
+		packet = getPacket()
+		
+		res = []
+		p = packet.params
+		
+		res.append( int( (p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24) )
+		
+		length = len( p ) - 4
+		if length % 3  != 0:
+			raise Exception( "Invalid packet length in sync read"
+
+		length /= 3
+		for i in range( length )
+			r = []
+			r.append( int( p[ 4 + i*3 ] ) )
+			r.append( int( p[ 4 + i*3 + 1 ] | p[ 4 + i*3 + 2 ] << 8 )
+
+			res.append( r )
+		
+		return res

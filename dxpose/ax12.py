@@ -1,7 +1,7 @@
-#!/usr/bin/env python
-
 """
-  PyPose: definitions of AX-12 Control Table
+  dxpose by marcino239
+  
+  copied from PyPose: definitions of AX-12 Control Table
   Copyright (c) 2008,2009 Michael E. Ferguson.  All right reserved.
 
   This library is free software; you can redistribute it and/or
@@ -45,6 +45,7 @@ P_DOWN_CALIBRATION_L = 20
 P_DOWN_CALIBRATION_H = 21
 P_UP_CALIBRATION_L = 22
 P_UP_CALIBRATION_H = 23
+
 # Control Table Symbolic Constants - RAM AREA
 P_TORQUE_ENABLE = 24
 P_LED = 25
@@ -86,4 +87,8 @@ AX_REG_WRITE = 4
 AX_ACTION = 5
 AX_RESET = 6
 AX_SYNC_WRITE = 131
+AX_SYNC_READ = 7
 
+# addresses
+AX_ID_BROADCAST	= 0xfe
+AX_ID_CONTROLLER = 0xfe
