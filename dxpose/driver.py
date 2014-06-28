@@ -19,119 +19,136 @@
 import serial
 import time
 import sys
-from enum import Enum, unique
-
 from ax12 import *
 
+import binascii
 
 """ represents dynamixel driver """
 class Driver:
 	
 	""" represents dynamixel packet """
 	class DXPacket:
-		def __init__():
+		def __init__( self ):
 			self.ID = 0
 			self.cmd = 0
 			self.length = 0
 			self.params = bytearray( '' )
 			self.csum = 0
 		
-		def checkCSum():
-			tsum = self.ID + self.cmd + self.length
-			for b in self.params
+		def checkCSum( self ):
+			tsum = self.ID + self.length + self.cmd 
+			for b in self.params:
 				tsum += b
 			
-			if (0xff - tsum) & 0xff == self.csum:
+			tsum = (0xff - tsum) & 0xff
+#			print( 'tsum: ' + str( tsum ) + ', csum: ' + str( self.csum ) )
+			if tsum == self.csum:
 				return True
-			else
+			else:
 				return False
 
-    """ Class to open a serial port and control AX-12 servos"""
-    def __init__(self, port="/dev/ttyACM0",baud=115200, timeour = 1 ):
-        self.ser = serial.Serial()
-        self.ser.baudrate = baud
-        self.ser.port = port
-        self.ser.timeout = 1
-        self.ser.open()
+	""" Class to open a serial port and control AX-12 servos"""
+	def __init__(self, port="/dev/ttyACM0",baud=115200, timeour = 1 ):
+		self.ser = serial.Serial()
+		self.ser.baudrate = baud
+		self.ser.port = port
+		self.ser.timeout = 1
+		self.ser.open()
 
 	""" returns binary packet """
-	def createPacket( id, cmd, params ):
+	def createPacket( self, id, cmd, params ):
 		
 		length = 2 + len( params )
-		packet = bytearray( [ 0xff, 0xff, chr( id ), chr( length ), chr( cmd ) ] )
+		packet = bytearray( [chr( 0xff ), chr( 0xff ), chr( id ), chr( length ), chr( cmd )] )
+
 		for p in params:
 			packet.append( chr( p ) )
 		
 		csum = 0
-		for b in packet
+		for b in packet:
 			csum += b
 		
 		csum = 255 - (csum - 0xff - 0xff)
-		return packet.append( csum )
+		packet.append( csum )
+
+#		print( 'packet: ' + binascii.hexlify( packet ) )
+
+		return packet
 
 	""" listens for a packet """
-    def getPacket( self ):
+	def getPacket( self ):
 
-		@unique
-		class DXState( Enum ):
-			DXS_NONE = 0
-			DXS_H1 = 1
-			DXS_ID = 2
-			DXS_CMD = 3
-			DXS_LEN = 4
-			DXS_PARAMS = 5
-			DXS_CSUM = 6
-		
+		DXS_NONE = 0
+		DXS_H1 = 1
+		DXS_ID = 2
+		DXS_CMD = 3
+		DXS_LEN = 4
+		DXS_PARAMS = 5
+		DXS_CSUM = 6
+
 		dxstate = DXS_NONE
-		packet = DXPacket()
+		packet = self.DXPacket()
 		countParams = 0
-		
+
 		while True:
 			b = self.ser.read()
 			if b =='':
 				raise Exception( "Serial Timeout" )
-			
+
+#			print( 'dxstate: ' + str( dxstate ) )
+#			print( 'byte: ' + binascii.hexlify( b ) )
+
 			if dxstate == DXS_NONE:
 				if b != chr( 0xff ):
 					raise Exception( "Wrong header" )
 				dxstate = DXS_H1
+
 			elif dxstate == DXS_H1:
 				if b != chr( 0xff ):
 					raise Exception( "Wrong header" )
 				dxstate = DXS_ID
+
 			elif dxstate == DXS_ID:
-				packet.ID = b
+				packet.ID = ord( b )
 				dxstate = DXS_LEN
+
 			elif dxstate == DXS_LEN:
-				packet.length = b
-				dxstate = DXS_PARAMS
+				packet.length = ord( b )
+				dxstate = DXS_CMD
+
+			elif dxstate == DXS_CMD:
+				packet.cmd = ord( b )
+				if packet.length == 2:
+					dxstate = DXS_CSUM
+				else:
+					dxstate = DXS_PARAMS
+
 			elif dxstate == DXS_PARAMS:
+				print( "hello2" )
 				if countParams < packet.length - 2:
-					packet.params.append( b )
+					packet.params.append( ord( b ) )
 					countParams += 1
 				if countParams == packet.length - 2:
 					dxstate = DXS_CSUM
+
 			elif dxstate == DXS_CSUM:
-				packet.csum = b
-				
+				packet.csum = ord( b )
 				if not packet.checkCSum():
 					raise Exception( "Invalid checksum" )
-				else
+				else:
 					return packet
-			else
+			else:
 				raise Exception( "Invalid state" )
 
+	def writeReg( self, ID, regstart, values ):
+		self.ser.flashOutput()
+		self.ser.write( self.createPacket( ID, AX_WRITE_DATA, [regstart] + values ) )
 
-    def setReg(self, index, regstart, values):
-		self.ser.flashOutput
-        self.ser.write( createPacket( ID, AX_WRITE_DATA, [regstart] + values ) )
+	def readReg( self, ID, regstart, rlength ):
 
-    def getReg(self, index, regstart, rlength):
+		self.ser.write( self.createPacket( ID, AX_READ_DATA, [regstart, rlength] ) )
+		packet = self.getPacket()
 
-		self.ser.write( createPacket( ID, AX_READ_DATA, [regstart, rlength] )
-
-		packet = getPacket()
-		
 		l = len( packet.params )
 		if l == 0:
 			raise Exception( "Read Failed: Servo ID: " + str( ID ) )
@@ -142,28 +159,39 @@ class Driver:
 
 		return packet.params
 
-	""" synchronised write. vals has the following composition: 
-	
-		[ [ ID1, [ P1, P2 ] ], [ID2, [P1,P2], ... ]
+	def ping( self, ID ):	
+		self.ser.write( self.createPacket( ID, AX_PING, [] ) )
+		packet = self.getPacket()
 
-		parameters are assumed to be uint16
+		if packet.cmd == 0:
+			return True
+		else:
+			return False
+
+
+	""" synchronised write. vals has the following composition: 
+
+	[ [ ID1, [ P1, P2 ] ], [ID2, [P1,P2], ... ]
+
+	parameters are assumed to be uint16
 
 	"""
-    def syncWrite(self, addr, length, vals ):
+	def syncWrite(self, addr, length, vals ):
 		v = bytearray( '' )
 
 		# add register address and length
 		v.append( chr( addr ) )
 		v.append( chr( length ) )
-		
-		for el in vals
+
+		for el in vals:
 			v.append( el[ 0 ] )		# id
 			params = el[ 1 ]		# parameters
-			for pel in params
-				v.append( chr( pel & 0xff ) )
-				v.append( chr( ( pel >> 8 ) & 0xff )
 
-		self.ser.write( createPacket( AX_ID_BROADCAST, AX_SYNC_WRITE, v )
+		for pel in params:
+			v.append( chr( pel & 0xff ) )
+			v.append( chr( ( pel >> 8 ) & 0xff ) )
+
+		self.ser.write( self.createPacket( AX_ID_BROADCAST, AX_SYNC_WRITE, v ) )
 
 	""" returns position information for servos
 		
@@ -174,23 +202,23 @@ class Driver:
 	"""
 	def syncRead( self, servoIDs ):
 		
-		ser.write( createPacket( AX_ID_CONTROLLER, AX_SYNC_READ, servoIDs ) )
-		packet = getPacket()
+		ser.write( self.createPacket( AX_ID_CONTROLLER, AX_SYNC_READ, servoIDs ) )
+		packet = self.getPacket()
 		
 		res = []
 		p = packet.params
 		
-		res.append( int( (p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24) )
+		res.append( int( (p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24) ) )
 		
 		length = len( p ) - 4
 		if length % 3  != 0:
-			raise Exception( "Invalid packet length in sync read"
+			raise Exception( "Invalid packet length in sync read" )
 
-		length /= 3
-		for i in range( length )
+		length = length / 3
+		for i in range( length - 1 ):
 			r = []
 			r.append( int( p[ 4 + i*3 ] ) )
-			r.append( int( p[ 4 + i*3 + 1 ] | p[ 4 + i*3 + 2 ] << 8 )
+			r.append( int( p[ 4 + i*3 + 1 ] | p[ 4 + i*3 + 2 ] << 8 ) )
 
 			res.append( r )
 		

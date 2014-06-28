@@ -154,6 +154,9 @@ int DxlReadWord( uint8 id, uint8 addr, uint16 *ptrWord ) {
 	DXL_SERIAL.write( addr );
 	DXL_SERIAL.write( 2 );
 	DXL_SERIAL.write( (uint8)~(id + 0x04 + DXL_CMD_READ_DATA + addr + 2) );
+
+	DXL_SERIAL.waitDataToBeSent();
+
 	DxlSetRX();
 
 	return DxlReadPacketWord( 2 + 6, ptrWord );
@@ -220,6 +223,8 @@ void setup() {
 
 	// init usb
 	SerialUSB.begin();
+
+	Serial2.begin( 115200 );
 
 	// init dynamixel
 	dxl_timeout = 10000000 / DXL_BAUDRATE;
@@ -290,17 +295,19 @@ void loop(){
 				
 			case DXS_CMD:
 				gotCmd = b;
-				dxstate = DXS_PARAMS;
+				if( gotLen == 2 )
+					dxstate = DXS_CSUM;
+				else
+					dxstate = DXS_PARAMS;
 				paramCount = 0;
 				tempCsum += b;
 				break;
 
 			case DXS_PARAMS:
-				if( paramCount < gotLen - 3 ) {
+				if( paramCount < gotLen - 2 ) {
 					buff[ paramCount++ ] = b;
 					tempCsum += b;
-				} else
-					dxstate = DXS_WAITING;
+				}
 
 				if( paramCount == gotLen )
 					dxstate = DXS_CSUM;
@@ -321,6 +328,9 @@ void loop(){
 		
 		// process packet
 		if( gotPacket ) {
+			Serial2.println();
+			Serial2.println( "got packet" );
+
 			if( gotID == ID_CONTROLLER ) {
 				if( tempCsum != gotCsum ) {
 					respondInvalidCommand();
@@ -341,10 +351,17 @@ void loop(){
 				DXL_SERIAL.write( gotID );
 				DXL_SERIAL.write( gotLen );
 				DXL_SERIAL.write( gotCmd );
-				DXL_SERIAL.write( buff, gotLen );
+
+				if( gotLen > 2 )
+					DXL_SERIAL.write( buff, gotLen - 2 );
+
 				DXL_SERIAL.write( gotCsum );
 
+				DXL_SERIAL.waitDataToBeSent();
+
 				DxlSetRX();
+
+				gotPacket = false;
 			}
 		}
 	}
@@ -357,8 +374,12 @@ void loop(){
 
 
 	// process dynamixel received data
-	while( DXL_SERIAL.available() > 0 )
-		SerialUSB.write( DXL_SERIAL.read() );
+	while( DXL_SERIAL.available() > 0 ) {
+		uint8 b = DXL_SERIAL.read();
+		SerialUSB.write( b );
+		Serial2.print( b, HEX );
+		Serial2.print( " " );
+	}
 }
 
 int main()

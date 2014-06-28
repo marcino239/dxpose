@@ -23,8 +23,8 @@ import pickle
     each action is a tuple (time, action1, action2, ... )
     servo id are in seroIDs variable
 """
-class Project
-	def __init__( fName = '' ):
+class Project:
+	def __init__( self, fName = '' ):
 		self.servoIDs = []
 		self.sequence = []  # list of actions
 		
@@ -46,6 +46,6 @@ class Project
 		f.close()
 			  
 	class Action:
-		def __init__:
+		def __init__( self ):
 			self.timestamp = 0;
 			self.pose = [];

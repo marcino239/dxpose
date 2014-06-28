@@ -23,12 +23,13 @@
 """
 
 import sys
+import getopt
 import time
 import kbhit
 import driver
 import project
 
-def usuage():
+def usage():
 	print( 'dxpose --max-servo [max servo id] --serial [port] --play [filename] | --rec [file name]' )
 
 def main( argv ):
@@ -39,40 +40,50 @@ def main( argv ):
 	recFname = ''
 
 	try:
-		opts, args = getopt.getopt( argv, "hmspr", [ "help", "max-servo", "serial", "play", "rec" ] )
+		opts, args = getopt.getopt( argv, "hm:s:p:r:", [ "help", "max-servo", "serial", "play", "rec" ] )
 	except getopt.GetoptError:
 		usage()
 		sys.exit(2)
 
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
-			usage() 
+			usage()
 			sys.exit()
 		elif opt in ( "-m", "--max-servo" ):
 			try:
+				print( 'max servo: ' + arg )
 				max_servo_id = int( arg )
 			except ValueError:
 				usage()
 				sys.exit(2)
 		elif opt in ( "-s", "--serial" ):
+			print( 'serial: ' + arg )
 			port = arg
 		elif opt in ( "-p", "--play" ):
 			playFName = opt
 		elif opt in ( "-r", "--rec" ):
 			recFName = opt
 
+	if max_servo_id <= 0:
+		print( 'max servo id needs to > 0' )
+		sys.exit( 2 )
+
 	# open serial port
 	try:
 		drv = driver.Driver( port, 115200 )
-	except Error:
-		print( 'unable to open port: ' + port )
+	except:
+		e = sys.exc_info()[0]
+		print( 'Error: ' + str( e ) + '. unable to open port: ' + port )
 		sys.exit( 2 )
 
+	# ping servo
+	print( 'reading servo id' )
+	res = drv.ping( 1 )
+
+	print( 'got servo id: ' + str( res ) )
+	sys.exit( 0 )
+
 	if recFName != '':
-		if max_servo_id <= 0:
-			print( 'max servo id needs to > 0' )
-			sys.exit( 2 )
-		
 		actionRecord( drv, max_servo_id, recFName )
 
 
@@ -93,7 +104,7 @@ def actionRecord( drv, max_servo_id, recFName):
 	kb = KBHit()
 	while True:
 		if kb.kbhit():
-			print( 'Saving data into: recFname )
+			print( 'Saving data into: ' + recFname )
 			pr.save( recFName )
 			return
 			
@@ -103,7 +114,7 @@ def actionRecord( drv, max_servo_id, recFName):
 		action.timestamp = res[ 0 ]
 		a = []
 		
-		for i in range( 1 to len( res ) )
+		for i in range( 1, len( res ) - 1 ):
 			a.append( res[ i ] )
 		
 		action.pose = a
@@ -118,8 +129,8 @@ def actionPlay( drv, playFName ):
 	
 	prev_timestamp = 0
 	
-	for el in pr.sequence
-		if prev_timestamp != 0
+	for el in pr.sequence:
+		if prev_timestamp != 0:
 			time.sleep( (el.timestamp - prev_timestamp) / 1000.0 )
 
 		prev_timestamp = el.timestamp
