@@ -30,8 +30,8 @@ class Driver:
 	class DXPacket:
 		def __init__( self ):
 			self.ID = 0
-			self.cmd = 0
 			self.length = 0
+			self.cmd = 0
 			self.params = bytearray( '' )
 			self.csum = 0
 		
@@ -46,6 +46,10 @@ class Driver:
 				return True
 			else:
 				return False
+
+		def debug( self ):
+			print( 'ID: ' + str( self.ID ) + ', len: ' + str( self.length ) + ', cmd: ' + str( self.cmd ) + ', par: ' + binascii.hexlify( self.params ) );
+			
 
 	""" Class to open a serial port and control AX-12 servos"""
 	def __init__(self, port="/dev/ttyACM0",baud=115200, timeour = 1 ):
@@ -62,16 +66,16 @@ class Driver:
 		packet = bytearray( [chr( 0xff ), chr( 0xff ), chr( id ), chr( length ), chr( cmd )] )
 
 		for p in params:
-			packet.append( chr( p ) )
+			packet.append( chr( p & 0xff ) )
 		
 		csum = 0
 		for b in packet:
 			csum += b
 		
-		csum = 255 - (csum - 0xff - 0xff)
+		csum = (255 - (csum - 0xff - 0xff)) & 0xff
 		packet.append( csum )
 
-#		print( 'packet: ' + binascii.hexlify( packet ) )
+#		print( 'params len: ' + str( len( params ) ) + ', packet: ' + binascii.hexlify( packet ) )
 
 		return packet
 
@@ -92,7 +96,7 @@ class Driver:
 
 		while True:
 			b = self.ser.read()
-			if b =='':
+			if b == '':
 				raise Exception( "Serial Timeout" )
 
 #			print( 'dxstate: ' + str( dxstate ) )
@@ -124,7 +128,6 @@ class Driver:
 					dxstate = DXS_PARAMS
 
 			elif dxstate == DXS_PARAMS:
-				print( "hello2" )
 				if countParams < packet.length - 2:
 					packet.params.append( ord( b ) )
 					countParams += 1
@@ -141,7 +144,7 @@ class Driver:
 				raise Exception( "Invalid state" )
 
 	def writeReg( self, ID, regstart, values ):
-		self.ser.flashOutput()
+		self.ser.flushOutput()
 		self.ser.write( self.createPacket( ID, AX_WRITE_DATA, [regstart] + values ) )
 
 	def readReg( self, ID, regstart, rlength ):
@@ -160,7 +163,7 @@ class Driver:
 		return packet.params
 
 	def ping( self, ID ):	
-		self.ser.write( self.createPacket( ID, AX_PING, [] ) )
+		self.ser.write( self.createPacket( ID, AX_PING, 1, [] ) )
 		packet = self.getPacket()
 
 		if packet.cmd == 0:
@@ -195,31 +198,77 @@ class Driver:
 
 	""" returns position information for servos
 		
-		[ timestamp, [ID1, Pos1], [ID2, Pos2], ... ]
+		[ timestamp, Pos1, Pos2, ... ]
 		
 		timestamp is local controller time in milliseconds
 		
 	"""
 	def syncRead( self, servoIDs ):
-		
-		ser.write( self.createPacket( AX_ID_CONTROLLER, AX_SYNC_READ, servoIDs ) )
+			
+		self.ser.write( self.createPacket( AX_ID_CONTROLLER, AX_SYNC_READ, servoIDs ) )
 		packet = self.getPacket()
 		
-		res = []
+		if packet.cmd != 0:
+			raise Exception( "Invalid responose" )		
+
+#		packet.debug()
 		p = packet.params
 		
+		res = []
 		res.append( int( (p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24) ) )
-		
+
+#		print( 'res: ' + str( res ) )
+
+#		print( 'len(p): ' + str( len( p ) ) )
 		length = len( p ) - 4
-		if length % 3  != 0:
+		if length % 2  != 0:
 			raise Exception( "Invalid packet length in sync read" )
 
-		length = length / 3
-		for i in range( length - 1 ):
-			r = []
-			r.append( int( p[ 4 + i*3 ] ) )
-			r.append( int( p[ 4 + i*3 + 1 ] | p[ 4 + i*3 + 2 ] << 8 ) )
+		length = length / 2
+		for i in range( length ):
+			res.append( int( p[ 4 + i*2 ] | (p[ 4 + i*2 + 1 ] << 8) ) )
 
-			res.append( r )
-		
+#		print( 'res: ' + str( res ) )
 		return res
+
+	def torqueOff( self, ID ):
+		self.writeReg( ID, P_TORQUE_ENABLE, [0] )
+		packet = self.getPacket()
+#		packet.debug()
+
+		if packet.cmd == 0:
+			return True
+		else:
+			return False
+
+	def torqueOn( self, ID ):
+		self.writeReg( ID, P_TORQUE_ENABLE, [1] )
+		packet = self.getPacket()
+#		packet.debug()
+
+		if packet.cmd == 0:
+			return True
+		else:
+			return False
+
+	def words2bytes( self, vals ):
+		res = []
+		for v in vals:
+			res.append( v & 0xff )
+			res.append( (v >> 8) & 0xff )
+		return res
+
+	def setPos( self, ID, position ):
+		self.writeReg( ID, P_GOAL_POSITION_L, self.words2bytes( [position] ) )
+		packet = self.getPacket()
+#		packet.debug()
+
+		if packet.cmd == 0:
+			return True
+		else:
+			return False
+
+	def readPos( self, ID ):
+		return self.readReg( ID, P_PRESENT_POSITION_L, 2 )
+
+		

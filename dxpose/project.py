@@ -20,7 +20,7 @@ import pickle
 
 """ this class implements sequence storage
     each sequence is set of actions
-    each action is a tuple (time, action1, action2, ... )
+    each action is a tuple (time, position1, position2, ... )
     servo id are in seroIDs variable
 """
 class Project:
@@ -35,17 +35,13 @@ class Project:
 		self.sequence.append( action )
 		
 	def save( self, fName ):
-		f = open( fName,'rb' )
-		tmp_dict = cPickle.load( f )
+		f = open( fName, 'wb' )
+		pickle.dump( self.__dict__, f )
 		f.close()          
-		self.__dict__.update( tmp_dict )
 
 	def load( self, fName ):
-		with open('entry.pickle', 'rb') as f:
-			self = pickle.load( f )
-		f.close()
-			  
-	class Action:
-		def __init__( self ):
-			self.timestamp = 0;
-			self.pose = [];
+		f = open( fName, 'rb' )
+		tmp_dict = pickle.load( f )
+		f.close()       
+		self.__dict__.update( tmp_dict )
+

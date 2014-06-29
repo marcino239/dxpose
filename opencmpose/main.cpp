@@ -118,26 +118,40 @@ int DxlReadPacketWord( uint8 len, uint16 *ptrWord ) {
 
   int tLen = 0;
   for( ; tLen < len; tLen = DXL_SERIAL.available() )
-    if( millis() - startTime > dxl_timeout )
+    if( millis() - startTime > dxl_timeout ) {
+//			Serial2.print( "tLen: " );
+//			Serial2.println( tLen );
+			Serial2.println( "DxlReadPacketWord: timeout" );
       return false;
-      
+		}
+
   // read into buffer
   int i;
-  uint8 csum = 0;
   for( i=0; i<tLen; i++ ) {
     uint8 b = DXL_SERIAL.read();
     local_buff[ i ] = b;
-    csum += b;
   }
-    
+  
+//	Serial2.print( "DxlReadPacketWord buff: " );
+//	for( i=0; i<tLen; i++ ) {
+//		Serial2.print( local_buff[ i ], HEX );
+//		Serial2.print( ' ' );
+//	}
+//	Serial2.println();
+
   // check checksum
-  for( i=2; i<tLen; i++ )
+  uint8 csum = 0;
+  for( i=2; i<tLen-1; i++ )
     csum += local_buff[ i ];
+
+	csum = (uint8)~csum;
     
-  if( csum != 0 )
+  if( csum != local_buff[ tLen - 1 ] ) {
+//		Serial2.println( "DxlReadPacketWord: invalid checksum" );
     return false;
-  else {
-    *ptrWord = local_buff[ 5 ] | local_buff[ 5+1 ] << 8;
+
+  } else {
+    *ptrWord =  (uint16)local_buff[ 5 ] | (uint16)local_buff[ 5+1 ] << 8;;
     return true;
   }
 }
@@ -145,18 +159,28 @@ int DxlReadPacketWord( uint8 len, uint16 *ptrWord ) {
 
 int DxlReadWord( uint8 id, uint8 addr, uint16 *ptrWord ) {
 
+	uint8 local_buff[ MAX_BUFF ];
+	int i = 0;
+
+	local_buff[ i++ ] = 0xff;
+	local_buff[ i++ ] = 0xff;
+	local_buff[ i++ ] = id;
+	local_buff[ i++ ] = 0x04;
+	local_buff[ i++ ] = DXL_CMD_READ_DATA;
+	local_buff[ i++ ] = addr;
+	local_buff[ i++ ] = 0x02;
+	local_buff[ i++ ] = (uint8)~(id + 0x04 + DXL_CMD_READ_DATA + addr + 2);
+
+//	Serial2.print( "DxlReadWord: " );
+//	for( int k=0; k<i; k++ ) {
+//		Serial2.print( local_buff[ k ], HEX );
+//		Serial2.print( " " );
+//	}
+//	Serial2.println();
+
 	DxlSetTX();
-	DXL_SERIAL.write( 0xff );
-	DXL_SERIAL.write( 0xff );
-	DXL_SERIAL.write( id );
-	DXL_SERIAL.write( 0x04 );
-	DXL_SERIAL.write( DXL_CMD_READ_DATA );
-	DXL_SERIAL.write( addr );
-	DXL_SERIAL.write( 2 );
-	DXL_SERIAL.write( (uint8)~(id + 0x04 + DXL_CMD_READ_DATA + addr + 2) );
-
+	DXL_SERIAL.write( local_buff, i );
 	DXL_SERIAL.waitDataToBeSent();
-
 	DxlSetRX();
 
 	return DxlReadPacketWord( 2 + 6, ptrWord );
@@ -170,6 +194,9 @@ int DxlReadWord( uint8 id, uint8 addr, uint16 *ptrWord ) {
 //
 int processSyncRead() {
 
+//	Serial2.print( "sync read param count: " );
+//	Serial2.println( paramCount );
+
 	if( paramCount > MAX_DXLS ) { // check if number of parameters does not exceed max servos
 		respondInvalidCommand();
 		return false;
@@ -177,30 +204,37 @@ int processSyncRead() {
 	
 	uint8 local_buff[ MAX_BUFF ];
 	
-	local_buff[ 0 ] = 0xff;
-	local_buff[ 1 ] = 0xff;
-	local_buff[ 2 ] = ID_CONTROLLER;
-	local_buff[ 3 ] = 2 + 2 * paramCount + 4;
-	local_buff[ 4 ] = DXL_RES_NO_ERROR;
+	int k = 0;
+	local_buff[ k++ ] = 0xff;
+	local_buff[ k++ ] = 0xff;
+	local_buff[ k++ ] = ID_CONTROLLER;
+	local_buff[ k++ ] = 2 + 2 * paramCount + 4;
+	local_buff[ k++ ] = DXL_RES_NO_ERROR;
 
 	uint32 timeStamp = millis();
-	local_buff[ 5 ] = (timeStamp >> 24) & 0xff;
-	local_buff[ 6 ] = (timeStamp >> 16) & 0xff;
-	local_buff[ 7 ] = (timeStamp >> 8) & 0xff;
-	local_buff[ 8 ] = (timeStamp >> 0) & 0xff;
+	local_buff[ k++ ] = (timeStamp      ) & 0xff;
+	local_buff[ k++ ] = (timeStamp >> 8 ) & 0xff;
+	local_buff[ k++ ] = (timeStamp >> 16) & 0xff;
+	local_buff[ k++ ] = (timeStamp >> 24) & 0xff;
 	
 	int i;
 	uint8 csum = 0;
 	for( i=0; i<paramCount; i++ ) {
-		uint16 pos;
-		
+		uint16 pos = 0;
+
 		if( !DxlReadWord( buff[ i ], DXL_ADDR_PRESENT_POS, &pos ) ) {
+			Serial2.println( "problem reading dynamixel" );
 			respondInvalidCommand();
 			return false;
 		}
+
+//		Serial2.print( "id: " );
+//		Serial2.print( buff[ i ] );
+//		Serial2.print( ", pos: " );
+//		Serial2.println( pos, HEX );
 		
-		local_buff[ 8 + 2*i     ] = (pos >> 8) & 0xff;
-		local_buff[ 8 + 2*i + 1 ] = (pos >> 0) & 0xff;
+		local_buff[ k++ ] = (pos >> 0) & 0xff;
+		local_buff[ k++ ] = (pos >> 8) & 0xff;
 		
 		csum += (pos >> 8) & 0xff;
 		csum += (pos >> 0) & 0xff;
@@ -210,9 +244,16 @@ int processSyncRead() {
 	for( i=2; i<8; i++ )
 		csum += local_buff[ i ];
 	
-	uint8 totResponseLen = 9 + 2*paramCount; 
-	local_buff[ totResponseLen ] = ~csum;
-	SerialUSB.write( local_buff, totResponseLen + 1 );
+	local_buff[ k++ ] = ~csum;
+
+//	Serial2.print( "sync read buff: " );
+//	for( i=0; i<k; i++ ) {
+//		Serial2.print( local_buff[ i ], HEX );
+//		Serial2.print( ' ' );
+//	}
+//	Serial2.println();
+
+	SerialUSB.write( local_buff, k );
   return true;
 }
 
@@ -261,6 +302,12 @@ void loop(){
 	while( SerialUSB.available() > 0 ) {
 		// We need to 0xFF at start of packet
 		b = SerialUSB.read();
+
+//		Serial2.print( "state: " );
+//		Serial2.print( dxstate, HEX );
+//		Serial2.print( ", b: " );
+//		Serial2.println( b, HEX );
+
 		
 		switch( dxstate ) {
 			case DXS_WAITING:
@@ -305,11 +352,12 @@ void loop(){
 
 			case DXS_PARAMS:
 				if( paramCount < gotLen - 2 ) {
-					buff[ paramCount++ ] = b;
+					buff[ paramCount ] = b;
 					tempCsum += b;
+					paramCount++;
 				}
 
-				if( paramCount == gotLen )
+				if( paramCount == gotLen - 2 )
 					dxstate = DXS_CSUM;
 					
 				break;
@@ -328,21 +376,30 @@ void loop(){
 		
 		// process packet
 		if( gotPacket ) {
-			Serial2.println();
-			Serial2.println( "got packet" );
+//			Serial2.println();
+//			Serial2.println( "got packet" );
 
 			if( gotID == ID_CONTROLLER ) {
+//				Serial2.println( "action on controller" );
+
 				if( tempCsum != gotCsum ) {
 					respondInvalidCommand();
 				} else if( gotCmd == CMD_SYNC_READ ) {
-					processSyncRead();
-				} else
+//					Serial2.println( "process sync read" );
+					int res = processSyncRead();
+//					Serial2.print( "sync read: " );
+//					Serial2.println( res );
+				} else {
 					// invalid command
 					respondInvalidCommand();
+				}
 
 				gotPacket = false;
 
 			} else {
+		
+//				Serial2.println( "forwarding packet" );
+
 				// send packet to the dynamixel network
 				DxlSetTX();
 				
@@ -356,7 +413,6 @@ void loop(){
 					DXL_SERIAL.write( buff, gotLen - 2 );
 
 				DXL_SERIAL.write( gotCsum );
-
 				DXL_SERIAL.waitDataToBeSent();
 
 				DxlSetRX();
@@ -377,8 +433,8 @@ void loop(){
 	while( DXL_SERIAL.available() > 0 ) {
 		uint8 b = DXL_SERIAL.read();
 		SerialUSB.write( b );
-		Serial2.print( b, HEX );
-		Serial2.print( " " );
+//		Serial2.print( b, HEX );
+//		Serial2.print( " " );
 	}
 }
 

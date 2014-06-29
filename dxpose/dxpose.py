@@ -29,6 +29,9 @@ import kbhit
 import driver
 import project
 
+# controls refresh rate [seconds]
+DX_POSE_DELAY = 0.1
+
 def usage():
 	print( 'dxpose --max-servo [max servo id] --serial [port] --play [filename] | --rec [file name]' )
 
@@ -37,7 +40,7 @@ def main( argv ):
 	max_servo_id = 0
 	port = ''
 	playFName = ''
-	recFname = ''
+	recFName = ''
 
 	try:
 		opts, args = getopt.getopt( argv, "hm:s:p:r:", [ "help", "max-servo", "serial", "play", "rec" ] )
@@ -60,9 +63,9 @@ def main( argv ):
 			print( 'serial: ' + arg )
 			port = arg
 		elif opt in ( "-p", "--play" ):
-			playFName = opt
+			playFName = arg
 		elif opt in ( "-r", "--rec" ):
-			recFName = opt
+			recFName = arg
 
 	if max_servo_id <= 0:
 		print( 'max servo id needs to > 0' )
@@ -76,16 +79,8 @@ def main( argv ):
 		print( 'Error: ' + str( e ) + '. unable to open port: ' + port )
 		sys.exit( 2 )
 
-	# ping servo
-	print( 'reading servo id' )
-	res = drv.ping( 1 )
-
-	print( 'got servo id: ' + str( res ) )
-	sys.exit( 0 )
-
 	if recFName != '':
 		actionRecord( drv, max_servo_id, recFName )
-
 
 	if playFName != '':
 		actionPlay( drv, playFName ) 
@@ -96,46 +91,82 @@ def main( argv ):
 """ record action """
 def actionRecord( drv, max_servo_id, recFName):
 
-	pr = Project()
+#	print( 'moving' )
+#	drv.setPos( 1, 400 )
+#	time.sleep( 1 )
+#
+#	for i in range( 400, 700, 10 ):
+#		drv.setPos( 1, i )
+#		time.sleep( 0.1 )
+#
+
+	servoIDs = range( 1, max_servo_id + 1 )
+	print( 'servoIDs: ' + str( servoIDs ) )
+
+	print( 'setting torque off' )
+	for ID in servoIDs:
+		print( '  ID: ' + str( ID ) )
+		drv.torqueOff( ID )
 	
-	servoIDs = range( max_servo_id )
+	pr = project.Project()
 	pr.servoIDs = servoIDs
-	
-	kb = KBHit()
+
+#	print( 'sync read' )
+#	res = drv.syncRead( servoIDs )
+#	print( 'sync read res: ' + str( res ) )
+#	print( 'single read' )
+#	res = drv.readPos( 2 )
+#	print( 'single read res: ' + str( res ) )
+
+	print( 'recording action' )
+
+	kb = kbhit.KBHit()
 	while True:
 		if kb.kbhit():
-			print( 'Saving data into: ' + recFname )
+			print( 'Saving data into: ' + recFName )
 			pr.save( recFName )
 			return
-			
-		res = drv.syncRead( servoIDs )
-	
-		action = Project.Action()
-		action.timestamp = res[ 0 ]
-		a = []
 		
-		for i in range( 1, len( res ) - 1 ):
-			a.append( res[ i ] )
+
+#		res = drv.syncRead( servoIDs )
+		res = []
+		for i in servoIDs:
+			res.append( drv.readPos( i ) )
+
+		action = []
+		action.append( int(round(time.time() * 1000)) )
 		
-		action.pose = a
-		
+		for i in range( 0, len( res ) ):
+			action.append( res[ i ] )
+
 		pr.addAction( action )
+		for a in action:
+			sys.stdout.write( str( a ) + ' ' )
+		print( " ." )
+
+
+		time.sleep( DX_POSE_DELAY )
  
 
 """ play action """
 def actionPlay( drv, playFName ):
 
 	pr = project.Project( playFName )
-	
-	prev_timestamp = 0
-	
-	for el in pr.sequence:
-		if prev_timestamp != 0:
-			time.sleep( (el.timestamp - prev_timestamp) / 1000.0 )
 
-		prev_timestamp = el.timestamp
-		
-		drv.syncWrite( P_GOAL_POSITION_L, 2, [] )
+	servoIDs = pr.servoIDs
+	print( 'servoIDs: ' + str( servoIDs ) )
+
+	print( 'setting torque on' )
+	for ID in servoIDs:
+		print( '  ID: ' + str( ID ) )
+		drv.torqueOn( ID )
+	
+	for action in pr.sequence:
+		print( 'action: ' + str( action ) )
+		for p in range( 1, len( action ) ):
+			drv.setPos( servoIDs[ p - 1 ], action[ p ] )
+
+		time.sleep( DX_POSE_DELAY )
 
 			
 if __name__ == "__main__":
